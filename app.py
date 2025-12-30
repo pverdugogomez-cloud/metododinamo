@@ -9,11 +9,45 @@ from docx.oxml.ns import qn
 from docx.oxml import OxmlElement
 import io
 import re
+import json
+import os
 
-# --- CONFIGURACIÓN DE LA PÁGINA ---
-st.set_page_config(page_title="Diagnóstico Dínamo", page_icon="📊")
+# --- CONFIGURACIÓN DE PÁGINA ---
+st.set_page_config(page_title="Diagnóstico Dínamo", page_icon="📊", layout="wide")
 
-# --- BASE DE DATOS ---
+# --- GESTIÓN DEL CONTADOR ---
+ARCHIVO_CONTADOR = "contador_global.json"
+
+def obtener_y_actualizar_contador():
+    # Intenta leer el archivo, si no existe, empieza en 0
+    if not os.path.exists(ARCHIVO_CONTADOR):
+        datos = {"total_reportes": 0}
+        with open(ARCHIVO_CONTADOR, "w") as f:
+            json.dump(datos, f)
+    
+    with open(ARCHIVO_CONTADOR, "r+") as f:
+        try:
+            datos = json.load(f)
+        except:
+            datos = {"total_reportes": 0}
+            
+        datos["total_reportes"] += 1
+        f.seek(0)
+        json.dump(datos, f)
+        f.truncate()
+        
+    return datos["total_reportes"]
+
+def leer_contador_actual():
+    if os.path.exists(ARCHIVO_CONTADOR):
+        with open(ARCHIVO_CONTADOR, "r") as f:
+            try:
+                return json.load(f)["total_reportes"]
+            except:
+                return 0
+    return 0
+
+# --- BASE DE DATOS (PREGUNTAS) ---
 db_encuesta = {
     "PILAR COGNITIVO": [
         {"pregunta": "1. Estado de tu energía mental cotidiana", "opciones": ["Me siento mentalmente apagado/a o saturado/a", "Funciono, pero con esfuerzo y dispersión", "Me siento claro/a y funcional la mayor parte del día", "Me siento activo/a mentalmente, creativo/a y con ideas"]},
@@ -45,6 +79,7 @@ db_encuesta = {
     ]
 }
 
+# --- PLAN DE ACCIÓN ---
 db_plan_accion = {
     "PILAR COGNITIVO": {
         "BAJO": [
@@ -99,7 +134,7 @@ db_plan_accion = {
     }
 }
 
-# --- FUNCIONES LOGICAS ---
+# --- FUNCIONES DE LÓGICA ---
 def leer_informe_anterior_seguro(file_obj):
     try:
         doc = Document(file_obj)
@@ -115,29 +150,63 @@ def leer_informe_anterior_seguro(file_obj):
     except:
         return None
 
-def generar_texto_resumen(scores_act, scores_prev):
-    promedios = {p: (sum(vals)/(len(vals)*4))*100 for p, vals in scores_act.items()}
-    promedio_global = sum(promedios.values()) / 3
+def generar_analisis_avanzado(scores_act, scores_prev):
+    """Genera un análisis textual más profundo y detallado."""
     
+    # 1. Calcular Porcentajes
+    stats = {}
+    for pilar, puntos in scores_act.items():
+        total = sum(puntos)
+        maximo = len(puntos) * 4
+        stats[pilar] = (total / maximo) * 100
+
+    promedio_global = sum(stats.values()) / 3
+    
+    # Identificar Fortaleza y Debilidad
+    ordenados = sorted(stats.items(), key=lambda x: x[1])
+    debilidad_nombre, debilidad_valor = ordenados[0]
+    fortaleza_nombre, fortaleza_valor = ordenados[-1]
+    
+    # --- REDACCIÓN DEL INFORME ---
     texto = ""
-    if promedio_global < 50:
-        texto += "Tu estado actual sugiere un modo de 'supervivencia'. Los niveles de energía requieren atención prioritaria. "
-    elif promedio_global < 75:
-        texto += "Te encuentras en una fase funcional, pero existe potencial latente sin aprovechar. "
-    else:
-        texto += "Estás en un estado de alto rendimiento y bienestar. "
     
+    # Párrafo 1: Estado General
+    texto += "RESUMEN DEL ESTADO ACTUAL:\n"
+    if promedio_global < 50:
+        texto += "Tu diagnóstico indica un estado de alerta o 'modo supervivencia'. Los niveles de energía son bajos en áreas críticas, lo que puede manifestarse como agotamiento crónico o desmotivación. Es prioritario detenerse y recargar antes de exigir más productividad.\n"
+    elif promedio_global < 75:
+        texto += "Te encuentras en una fase funcional y operativa. Tienes recursos para responder a las demandas diarias, pero es probable que sientas que no estás explotando todo tu potencial o que llegas con lo justo al fin de semana.\n"
+    else:
+        texto += "Presentas un estado de alto rendimiento y bienestar integral. Existe una sólida coherencia entre tu energía física, mental y espiritual, lo que te permite desplegar tu potencial con fluidez.\n"
+
+    # Párrafo 2: Análisis de Equilibrio (Fortalezas y Debilidades)
+    texto += "\nANÁLISIS DE EQUILIBRIO:\n"
+    if (fortaleza_valor - debilidad_valor) < 15:
+        texto += "Tus pilares se encuentran notablemente equilibrados. Esto es una excelente señal de estabilidad, ya que ninguna área está drenando excesivamente a las otras.\n"
+    else:
+        texto += f"Existe una descompensación importante. Mientras tu {fortaleza_nombre} es tu gran motor ({fortaleza_valor:.0f}%), el {debilidad_nombre} ({debilidad_valor:.0f}%) está actuando como un freno que limita tu avance general. Enfócate en elevar este último para desbloquear tu energía.\n"
+
+    # Párrafo 3: Evolución (Si hay historial)
     if scores_prev:
-        texto += "\n\nAnálisis Evolutivo: "
+        texto += "\nTENDENCIA EVOLUTIVA:\n"
         mejoras = 0
+        total_diff = 0
         for pilar in scores_act.keys():
             act = sum(scores_act[pilar])
             prev = scores_prev.get(pilar, 0)
-            if act > prev: mejoras += 1
+            diff = act - prev
+            total_diff += diff
+            if diff > 0: mejoras += 1
         
-        if mejoras == 3: texto += "¡Progreso excelente! Mejoraste en todos los pilares."
-        elif mejoras > 0: texto += "Se observan avances positivos, aunque algunos pilares requieren ajuste."
-        else: texto += "Se detecta un descenso en los indicadores respecto a la última vez."
+        if mejoras == 3:
+            texto += "¡Excelente trayectoria! Has logrado mejoras en los tres pilares simultáneamente. Tu estrategia de bienestar está dando resultados sólidos."
+        elif total_diff > 0:
+            texto += "El balance general es positivo. Aunque algunos indicadores se han mantenido, la tendencia global es de crecimiento respecto a la medición anterior."
+        elif total_diff < 0:
+            texto += "Se observa un retroceso en los indicadores generales. Es importante revisar qué hábitos o rutinas se han descuidado recientemente para retomar el rumbo."
+        else:
+            texto += "Tu estado se ha mantenido estable. Estás consolidando tu nivel actual, lo cual es una buena base para plantearse nuevos desafíos de mejora."
+            
     return texto
 
 def set_cell_bg(cell, color):
@@ -148,7 +217,7 @@ def set_cell_bg(cell, color):
     shd.set(qn('w:fill'), color)
     tcPr.append(shd)
 
-def crear_informe_final_v7(scores_act, scores_prev, nombre, img_stream, resumen_txt):
+def crear_informe_final_v8(scores_act, scores_prev, nombre, img_stream, resumen_txt, num_reporte):
     doc = Document()
     
     # MARCA INVISIBLE
@@ -161,21 +230,23 @@ def crear_informe_final_v7(scores_act, scores_prev, nombre, img_stream, resumen_
     # HEADER
     tit = doc.add_heading('Informe de Bienestar Integral', 0)
     tit.alignment = WD_ALIGN_PARAGRAPH.CENTER
+    
     p = doc.add_paragraph()
     p.alignment = WD_ALIGN_PARAGRAPH.CENTER
-    p.add_run(f"Fecha: {datetime.now().strftime('%d-%m-%Y')}   |   Evaluado: {nombre}").bold = True
+    fecha = datetime.now().strftime('%d-%m-%Y')
+    p.add_run(f"Fecha: {fecha}  |  Evaluado: {nombre}  |  Reporte N°: {num_reporte}").bold = True
 
-    # 1. RESUMEN
-    doc.add_heading('1. Resumen Ejecutivo', 1)
+    # 1. RESUMEN EJECUTIVO (AMPLIADO)
+    doc.add_heading('1. Análisis Ejecutivo', 1)
     doc.add_paragraph(resumen_txt)
 
     # 2. GRÁFICO
-    doc.add_heading('2. Análisis Gráfico', 1)
+    doc.add_heading('2. Visualización de Resultados', 1)
     doc.add_picture(img_stream, width=Inches(6.0))
     doc.add_page_break()
 
     # 3. PLAN DE MEJORA
-    doc.add_heading('3. Plan de Mejora Personalizado', 1)
+    doc.add_heading('3. Estrategia de Mejora Personalizada', 1)
     
     pilares = ["PILAR COGNITIVO", "PILAR FÍSICO", "PILAR ESPIRITUAL"]
     for p in pilares:
@@ -190,7 +261,7 @@ def crear_informe_final_v7(scores_act, scores_prev, nombre, img_stream, resumen_
         table.style = 'Table Grid'
         hdr = table.rows[0].cells
         hdr[0].text = "Acción Recomendada"
-        hdr[1].text = "Periodicidad"
+        hdr[1].text = "Periodicidad Sugerida"
         
         for cell in hdr:
             set_cell_bg(cell, "EAEAEA")
@@ -209,55 +280,75 @@ def crear_informe_final_v7(scores_act, scores_prev, nombre, img_stream, resumen_
 
 # --- INTERFAZ DE STREAMLIT ---
 
+# BARRA LATERAL (Sidebar) para el Contador y Logo
+with st.sidebar:
+    st.header("Centro de Control")
+    st.info("Bienvenido al sistema de diagnóstico Dínamo.")
+    
+    # Mostrar contador actual
+    total_reps = leer_contador_actual()
+    st.metric(label="Informes Generados", value=total_reps)
+    st.markdown("---")
+    st.caption("Sistema v8.0 - Análisis Avanzado")
+
+# ÁREA PRINCIPAL
 st.title("📊 Diagnóstico de Bienestar Dínamo")
-st.write("Responde el siguiente cuestionario para obtener tu informe de bienestar y plan de acción.")
+st.markdown("""
+Esta herramienta analiza tus tres pilares fundamentales (Cognitivo, Físico y Espiritual) 
+y genera un **informe completo con inteligencia analítica** y recomendaciones personalizadas.
+""")
 
-nombre = st.text_input("Nombre completo")
-
-# Sección Carga Historial
-with st.expander("📂 ¿Tienes un informe anterior? Cárgalo aquí para comparar"):
-    uploaded_file = st.file_uploader("Sube tu archivo .docx anterior", type="docx")
+col1, col2 = st.columns(2)
+with col1:
+    nombre = st.text_input("Nombre completo")
+with col2:
+    uploaded_file = st.file_uploader("📂 ¿Tienes un informe anterior? (Opcional)", type="docx")
 
 # Cuestionario
 scores_actual = {"PILAR COGNITIVO": [], "PILAR FÍSICO": [], "PILAR ESPIRITUAL": []}
 
+st.divider()
+
 with st.form("encuesta_form"):
     for pilar, preguntas in db_encuesta.items():
-        st.subheader(pilar)
+        st.subheader(f"🧠 {pilar}" if "COGNITIVO" in pilar else f"💪 {pilar}" if "FÍSICO" in pilar else f"✨ {pilar}")
         for p in preguntas:
-            # En Streamlit los radio buttons necesitan una 'key' única
             respuesta = st.radio(
                 p["pregunta"], 
                 p["opciones"], 
                 index=None, 
                 key=p["pregunta"]
             )
-            # Mapear respuesta a puntaje (si respondió)
             if respuesta:
                 idx = p["opciones"].index(respuesta) + 1
                 scores_actual[pilar].append(idx)
             else:
-                # Marcador temporal para validar después
-                scores_actual[pilar].append(0) 
+                scores_actual[pilar].append(0)
+        st.markdown("<br>", unsafe_allow_html=True)
     
-    submitted = st.form_submit_button("Generar Informe")
+    submitted = st.form_submit_button("Generar Informe Completo", type="primary")
 
 if submitted:
-    # Validar que no haya ceros (respuestas vacías)
     respuestas_planas = [item for sublist in scores_actual.values() for item in sublist]
     if 0 in respuestas_planas:
-        st.error("⚠️ Por favor responde todas las preguntas antes de generar el informe.")
+        st.error("⚠️ Por favor responde todas las preguntas para obtener un análisis preciso.")
     else:
-        # Procesar
+        # 1. ACTUALIZAR CONTADOR
+        nuevo_total = obtener_y_actualizar_contador()
+        
+        # 2. PROCESAR
         scores_prev = None
-        if uploaded_file is not None:
+        if uploaded_file:
             scores_prev = leer_informe_anterior_seguro(uploaded_file)
             if scores_prev:
-                st.success("✅ Informe anterior cargado y leído correctamente.")
+                st.toast("Historial cargado correctamente", icon="✅")
             else:
-                st.warning("⚠️ No se pudo leer la data del informe anterior. Se generará un informe base.")
+                st.toast("No se detectó historial válido. Se hará un informe base.", icon="ℹ️")
 
-        # Generar Gráfico
+        # 3. VISUALIZACIÓN
+        st.divider()
+        st.subheader("Resultados Preliminares")
+        
         fig, axes = plt.subplots(1, 3, figsize=(15, 5))
         colores = ['#4e79a7', '#f28e2b', '#e15759']
         pilares = ["PILAR COGNITIVO", "PILAR FÍSICO", "PILAR ESPIRITUAL"]
@@ -274,34 +365,43 @@ if submitted:
                 if diff != 0:
                     c = 'green' if diff > 0 else 'red'
                     ax.annotate(f"{diff:+}", xy=(1, act), xytext=(0, prev),
-                                arrowprops=dict(arrowstyle="->", color=c, lw=2))
+                                arrowprops=dict(arrowstyle="->", color=c, lw=2, fontsize=12, fontweight='bold'))
             else:
                 ax.bar(["Obtenido", "Máximo"], [act, max_p], color=[colores[i], '#eaeaea'])
             
             pct = (act/max_p)*100
             ax.set_title(f"{p}\n{pct:.0f}%")
             ax.set_ylim(0, max_p*1.2)
+            ax.spines['top'].set_visible(False)
+            ax.spines['right'].set_visible(False)
         
         st.pyplot(fig)
         
-        # Guardar gráfico en memoria para Word
+        # 4. GENERAR DOCUMENTO
         img_buf = io.BytesIO()
-        plt.savefig(img_buf, format='png')
+        plt.savefig(img_buf, format='png', bbox_inches='tight')
         img_buf.seek(0)
         
-        # Generar Word
-        resumen = generar_texto_resumen(scores_actual, scores_prev)
-        docx_file = crear_informe_final_v7(scores_actual, scores_prev, nombre if nombre else "Usuario", img_buf, resumen)
+        analisis_texto = generar_analisis_avanzado(scores_actual, scores_prev)
         
-        st.success("¡Informe generado exitosamente!")
+        docx_file = crear_informe_final_v8(
+            scores_actual, 
+            scores_prev, 
+            nombre if nombre else "Usuario", 
+            img_buf, 
+            analisis_texto,
+            nuevo_total
+        )
         
-        # Botón de Descarga
+        st.success("¡Informe generado y listo para descargar!")
+        st.info(f"Este es el reporte número {nuevo_total} generado por el sistema.")
+        
         fecha_str = datetime.now().strftime('%d-%m-%Y')
-        nombre_archivo = f"Informe_Bienestar_{nombre.replace(' ', '_')}_{fecha_str}.docx"
+        nombre_clean = nombre.replace(' ', '_') if nombre else "Usuario"
         
         st.download_button(
-            label="⬇️ Descargar Informe en Word",
+            label="⬇️ Descargar Informe PDF/Word",
             data=docx_file,
-            file_name=nombre_archivo,
+            file_name=f"Informe_Dinamo_{nombre_clean}_{fecha_str}.docx",
             mime="application/vnd.openxmlformats-officedocument.wordprocessingml.document"
         )
